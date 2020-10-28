@@ -1,19 +1,22 @@
 import { API, DynamicPlatformPlugin, Logger, PlatformAccessory, PlatformConfig, Service, Characteristic } from 'homebridge';
+import { getHarmonyClient, HarmonyClient } from '@harmonyhub/client-ws';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
-import { ExamplePlatformAccessory } from './platformAccessory';
+import { SimpleHarmonyAccessory } from './platformAccessory';
 
 /**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
  * parse the user config and discover/register accessories with Homebridge.
  */
-export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
+export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service = this.api.hap.Service;
   public readonly Characteristic: typeof Characteristic = this.api.hap.Characteristic;
 
   // this is used to track restored cached accessories
   public readonly accessories: PlatformAccessory[] = [];
+
+  public harmonyClient: HarmonyClient | null = null;
 
   constructor(
     public readonly log: Logger,
@@ -28,9 +31,41 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
     // to start discovery of new accessories.
     this.api.on('didFinishLaunching', () => {
       log.debug('Executed didFinishLaunching callback');
-      // run the method to discover / register your devices as accessories
+      
       this.discoverDevices();
     });
+  }
+
+  async ensureHarmonyClient() {
+    if (this.harmonyClient) {
+      return this.harmonyClient;
+    }
+    this.harmonyClient = await getHarmonyClient('192.168.0.49');
+    return this.harmonyClient;
+  }
+
+  async send(cmd: string) {
+    const client = await this.ensureHarmonyClient();
+
+    const encodedAction = cmd.replace(/:/g, '::');
+    return client.send('holdAction', encodedAction, 500);
+  }
+
+  async turnOn() {
+    const client = await this.ensureHarmonyClient();
+
+    try {
+      const commands = await client.getAvailableCommands();
+      const tv = commands.device[1];
+      
+      const powerGroup = tv.controlGroup[0];
+      // const volumeGroup = tv.controlGroup[2];
+      await this.send(powerGroup.function[0].action);
+
+      // client.end();
+    } catch (error) {
+      this.log.error('HarmonyError: ' + error.message);
+    }
   }
 
   /**
@@ -57,11 +92,7 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
     const exampleDevices = [
       {
         exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'Bedroom',
-      },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Kitchen',
+        exampleDisplayName: 'TV',
       },
     ];
 
@@ -88,7 +119,7 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
 
           // create the accessory handler for the restored accessory
           // this is imported from `platformAccessory.ts`
-          new ExamplePlatformAccessory(this, existingAccessory);
+          new SimpleHarmonyAccessory(this, existingAccessory);
           
           // update accessory cache with any changes to the accessory details and information
           this.api.updatePlatformAccessories([existingAccessory]);
@@ -111,7 +142,7 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
 
         // create the accessory handler for the newly create accessory
         // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, accessory);
+        new SimpleHarmonyAccessory(this, accessory);
 
         // link the accessory to your platform
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
