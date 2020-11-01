@@ -4,6 +4,15 @@ import { getHarmonyClient, HarmonyClient } from '@harmonyhub/client-ws';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { SimpleHarmonyAccessory } from './platformAccessory';
 
+
+// async function main() {
+//   const harmonyClient = await getHarmonyClient('192.168.0.49');
+//   const commands = await harmonyClient.getAvailableCommands();
+//   console.log(commands.device[1].controlGroup[4]);
+// }
+
+// main();
+
 /**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
@@ -48,7 +57,7 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
     const client = await this.ensureHarmonyClient();
 
     const encodedAction = cmd.replace(/:/g, '::');
-    return client.send('holdAction', encodedAction, 500);
+    return client.send('holdAction', encodedAction, 200);
   }
 
   async turnOn() {
@@ -67,6 +76,24 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
       this.log.error('HarmonyError: ' + error.message);
     }
   }
+
+  async turnOff() {
+    const client = await this.ensureHarmonyClient();
+
+    try {
+      const commands = await client.getAvailableCommands();
+      const tv = commands.device[1];
+      
+      const powerGroup = tv.controlGroup[0];
+      // const volumeGroup = tv.controlGroup[2];
+      await this.send(powerGroup.function[0].action);
+
+      // client.end();
+    } catch (error) {
+      this.log.error('HarmonyError: ' + error.message);
+    }
+  }
+
 
   /**
    * This function is invoked when homebridge restores cached accessories from disk at startup.
@@ -92,7 +119,7 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
     const exampleDevices = [
       {
         exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'TV',
+        exampleDisplayName: 'Television',
       },
     ];
 
@@ -134,7 +161,8 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
         this.log.info('Adding new accessory:', device.exampleDisplayName);
 
         // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
+        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid, this.api.hap.Categories.TELEVISION);
+        // accessory.category = this.api.hap.Categories.TELEVISION;
 
         // store a copy of the device object in the `accessory.context`
         // the `context` property can be used to store any data about the accessory you may need
