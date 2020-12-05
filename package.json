@@ -1,5 +1,4 @@
 {
-  "private": true,
   "displayName": "HomebridgeMqttFlavoredHarmony",
   "name": "homebridge-mqtt-flavored-harmony",
   "version": "1.0.0",

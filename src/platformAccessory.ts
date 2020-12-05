@@ -36,12 +36,12 @@ export class SimpleHarmonyAccessory {
 
     client.on('connect', () => {
       this.platform.log.info('on connect');
-      client.subscribe('zigbee2mqtt/0x000d6f0016196033');
+      client.subscribe('zigbee2mqtt/0x24fd5b00010d0659');
     });
 
     client.on('message', (topic, message) => {
       this.platform.log.info('Received MQTT: ' + topic + ' = ' + message);
-      if (topic === 'zigbee2mqtt/0x000d6f0016196033') {
+      if (topic === 'zigbee2mqtt/0x24fd5b00010d0659') {
         const status = JSON.parse(message.toString());
         const on = (status.power > 10) && 1 || 0;
         if (this.exampleStates.Active !== on) {
