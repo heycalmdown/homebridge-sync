@@ -1,3 +1,4 @@
+import { HarmonyClient } from '@harmonyhub/client-ws';
 import {
   Service,
   PlatformAccessory,
@@ -8,22 +9,32 @@ import {
 } from 'homebridge';
 import { connect } from 'mqtt';
 
-import { MqttFlavoredHarmonyPlatform } from './platform';
+import { MqttFlavoredHarmonyPlatform, MQTT_SERVER } from './platform';
 
+interface Message {
+  power: number;
+}
+
+const MIN_POWER = 0;
+const THRESHOLD = 5;
+const MAX_POWER = 190;
 /**
  * Platform Accessory
  * An instance of this class is created for each accessory your platform registers
  * Each accessory may expose multiple services of different service types.
  */
-export class SimpleHarmonyAccessory {
+export class TelevisionAccessory {
   private service: Service;
   private speakerService: Service;
+  private messages: Message[] = [];
+  private justStarted = true;
+  private handler: NodeJS.Timeout | null = null;
 
   /**
    * These are just used to create a working example
    * You should implement your own code to track the state of your accessory
    */
-  private exampleStates = {
+  private states = {
     Active: 0,
   };
 
@@ -32,22 +43,26 @@ export class SimpleHarmonyAccessory {
     private readonly accessory: PlatformAccessory,
   ) {
 
-    const client = connect('mqtt://localhost');
+    const client = connect(MQTT_SERVER);
 
     client.on('connect', () => {
-      this.platform.log.info('on connect');
+      this.platform.log.info('[TV] on connect');
       client.subscribe('zigbee2mqtt/0x24fd5b00010d0659');
     });
 
     client.on('message', (topic, message) => {
-      this.platform.log.info('Received MQTT: ' + topic + ' = ' + message);
       if (topic === 'zigbee2mqtt/0x24fd5b00010d0659') {
         const status = JSON.parse(message.toString());
-        const on = (status.power > 10) && 1 || 0;
-        if (this.exampleStates.Active !== on) {
-          this.exampleStates.Active = on;
+        this.messages.unshift({ power: status.power });
+        this.messages = this.messages.slice(0, 5);
+        this.platform.log.debug('[TV] ' + JSON.stringify(this.messages));
+
+        if (this.justStarted || this.messages.length === 5) {
+          const averagePower = (this.messages.reduce((p, v) => p + v.power, 0) / this.messages.length);
+          this.justStarted = false;
+          this.states.Active = averagePower > THRESHOLD && 1 || 0;
+          this.service.updateCharacteristic(this.platform.Characteristic.Active, this.states.Active);
         }
-        this.service.updateCharacteristic(this.platform.Characteristic.Active, this.exampleStates.Active);
       }
     });
 
@@ -86,10 +101,8 @@ export class SimpleHarmonyAccessory {
       .getCharacteristic(this.platform.Characteristic.RemoteKey)!
       .on(CharacteristicEventTypes.SET, async (newValue: CharacteristicValue, callback: CharacteristicSetCallback) => {
         this.platform.log.info('set Remote Key => setNewValue: ' + newValue);
-        const client = await this.platform.ensureHarmonyClient();
         try {
-          const commands = await client.getAvailableCommands();
-          const tv = commands.device[1];
+          const tv = await this.findDevice();
           let action: string | null = null;
           switch (newValue) {
             case this.platform.Characteristic.RemoteKey.INFORMATION:
@@ -130,11 +143,8 @@ export class SimpleHarmonyAccessory {
     this.speakerService.getCharacteristic(this.platform.Characteristic.VolumeSelector)
       .on(CharacteristicEventTypes.SET, async (newValue: CharacteristicValue, callback: CharacteristicSetCallback) => {
         this.platform.log.info('set VolumeSelector => setNewValue: ' + newValue);
-        const client = await this.platform.ensureHarmonyClient();
-
         try {
-          const commands = await client.getAvailableCommands();
-          const tv = commands.device[1];
+          const tv = await this.findDevice();
 
           const volumeGroup = tv.controlGroup[2];
           await this.platform.send(volumeGroup.function[newValue === 0 && 2 || 1].action);
@@ -146,18 +156,79 @@ export class SimpleHarmonyAccessory {
       });
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
-   */
-  setOn(value: CharacteristicValue, callback: CharacteristicSetCallback) {
-
-    // implement your own code to turn your device on/off
-    const active = value as number;
-    if (this.exampleStates.Active !== active) {
-      this.platform.turnOn();
+  async findDevice(): Promise<HarmonyClient.DeviceDescription> {
+    const client = await this.platform.ensureHarmonyClient();
+    const commands = await client.getAvailableCommands();
+    const device = commands.device.find(d => d.label === 'TV');
+    if (!device) {
+      throw new Error('no TV');
     }
-    this.exampleStates.Active = active;
+    return device;
+  }
+
+  clearInterval() {
+    if (this.handler) {
+      clearInterval(this.handler);
+      this.handler = null;
+    }
+  }
+
+  async send(message: string, predicate: () => boolean, action: () => void) {
+    try {
+      this.messages = [];
+      this.clearInterval();
+      let checked = 0;
+      let sent = 0;
+      sent++;
+      action();
+      this.handler = setInterval(() => {
+        checked++;
+        this.platform.log.info(`[TV] ${message} checked(${checked}) sent(${sent})`);
+        if (this.messages.length < 2) {
+          return; 
+        }
+
+        if (predicate()) {
+          this.clearInterval();
+        } else {
+          sent++;
+          this.messages = [];
+          action();
+        }
+      }, 1000);
+    } catch (error) {
+      this.platform.log.info('[TV] HarmonyError: ' + error.message);
+    }
+  }
+
+  async powerToggle() {
+    const device = await this.findDevice();
+    const powerGroup = device.controlGroup[0];
+    // const miscGroup = device.controlGroup[1];
+
+    this.platform.log.info('[TV]', powerGroup.function[0].action);
+    await this.platform.send(powerGroup.function[0].action);
+  }
+
+  async turnOn() {
+    this.send('turning on', () => this.messages[0].power > THRESHOLD + MIN_POWER, () => this.powerToggle());
+  }
+
+  async turnOff() {
+    this.send('turning off', () => this.messages[0].power < MAX_POWER - THRESHOLD, () => this.powerToggle());
+  }
+
+  setOn(value: CharacteristicValue, callback: CharacteristicSetCallback) {
+    const active = value as number;
+    if (this.states.Active === active) {
+      return;
+    }
+    if (active === 1) {
+      this.turnOn();
+    } else {
+      this.turnOff();
+    }
+    this.states.Active = active;
 
     this.platform.log.info('Set Characteristic Active ->', value);
 
@@ -181,9 +252,9 @@ export class SimpleHarmonyAccessory {
   getOn(callback: CharacteristicGetCallback) {
 
     // implement your own code to check if the device is on
-    const isOn = this.exampleStates.Active;
+    const isOn = this.states.Active;
 
-    this.platform.log.info('Get Characteristic Active ->', isOn);
+    this.platform.log.info('[TV] Get Characteristic Active ->', isOn);
 
     // you must call the callback function
     // the first argument should be null if there were no errors

@@ -2,22 +2,12 @@ import { API, DynamicPlatformPlugin, Logger, PlatformAccessory, PlatformConfig, 
 import { getHarmonyClient, HarmonyClient } from '@harmonyhub/client-ws';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
-import { SimpleHarmonyAccessory } from './platformAccessory';
+import { TelevisionAccessory } from './television';
+import { FanAccessory } from './fan';
 
+export const MQTT_SERVER = 'mqtt://localhost';
+// export const MQTT_SERVER = 'mqtt://pi';
 
-// async function main() {
-//   const harmonyClient = await getHarmonyClient('192.168.0.49');
-//   const commands = await harmonyClient.getAvailableCommands();
-//   console.log(commands.device[1].controlGroup[4]);
-// }
-
-// main();
-
-/**
- * HomebridgePlatform
- * This class is the main constructor for your plugin, this is where you should
- * parse the user config and discover/register accessories with Homebridge.
- */
 export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service = this.api.hap.Service;
   public readonly Characteristic: typeof Characteristic = this.api.hap.Characteristic;
@@ -50,6 +40,10 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
       return this.harmonyClient;
     }
     this.harmonyClient = await getHarmonyClient('192.168.0.49');
+    this.harmonyClient.on(HarmonyClient.Events.DISCONNECTED, () => {
+      this.log.error('harmony ws disconnected');
+      this.harmonyClient?.connect('192.168.0.49');
+    });
     return this.harmonyClient;
   }
 
@@ -57,7 +51,7 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
     const client = await this.ensureHarmonyClient();
 
     const encodedAction = cmd.replace(/:/g, '::');
-    return client.send('holdAction', encodedAction, 200);
+    return client.send('holdAction', encodedAction);
   }
 
   async turnOn() {
@@ -120,61 +114,55 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
       {
         exampleUniqueId: 'ABCD',
         exampleDisplayName: 'Television',
+        type: 'TELEVISION',
+        label: 'TV'
       },
+      {
+        exampleUniqueId: 'EFGH',
+        exampleDisplayName: 'Fan',
+        type: 'FAN',
+        label: 'GreenFan'
+      }
     ];
 
-    // loop over the discovered devices and register each one if it has not already been registered
     for (const device of exampleDevices) {
-
-      // generate a unique id for the accessory this should be generated from
-      // something globally unique, but constant, for example, the device serial
-      // number or MAC address
       const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
 
-      // see if an accessory with the same uuid has already been registered and restored from
-      // the cached devices we stored in the `configureAccessory` method above
       const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
 
       if (existingAccessory) {
-        // the accessory already exists
         if (device) {
           this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
 
-          // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. eg.:
-          // existingAccessory.context.device = device;
-          // this.api.updatePlatformAccessories([existingAccessory]);
-
-          // create the accessory handler for the restored accessory
-          // this is imported from `platformAccessory.ts`
-          new SimpleHarmonyAccessory(this, existingAccessory);
+          if (device.type === 'TELEVISION') {
+            new TelevisionAccessory(this, existingAccessory);
+          } else if (device.type === 'FAN') {
+            new FanAccessory(this, existingAccessory);
+          }
           
-          // update accessory cache with any changes to the accessory details and information
           this.api.updatePlatformAccessories([existingAccessory]);
         } else if (!device) {
-          // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, eg.:
-          // remove platform accessories when no longer present
           this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
           this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
         }
       } else {
-        // the accessory does not yet exist, so we need to create it
         this.log.info('Adding new accessory:', device.exampleDisplayName);
 
-        // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid, this.api.hap.Categories.TELEVISION);
-        // accessory.category = this.api.hap.Categories.TELEVISION;
-
-        // store a copy of the device object in the `accessory.context`
-        // the `context` property can be used to store any data about the accessory you may need
-        accessory.context.device = device;
-
-        // create the accessory handler for the newly create accessory
-        // this is imported from `platformAccessory.ts`
-        new SimpleHarmonyAccessory(this, accessory);
-
-        // link the accessory to your platform
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-        this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
+        if (device.type === 'TELEVISION') {
+          const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid, this.api.hap.Categories.TELEVISION);
+          accessory.context.device = device;
+  
+          new TelevisionAccessory(this, accessory);
+          this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+          this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
+        } else if (device.type === 'FAN') {
+          const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid, this.api.hap.Categories.FAN);
+          accessory.context.device = device;
+  
+          new FanAccessory(this, accessory);
+          this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+          this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
+        }
       }
     }
   }
