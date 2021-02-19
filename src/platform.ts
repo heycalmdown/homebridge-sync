@@ -115,14 +115,14 @@ export class MqttFlavoredHarmonyPlatform implements DynamicPlatformPlugin {
         exampleUniqueId: 'ABCD',
         exampleDisplayName: 'Television',
         type: 'TELEVISION',
-        label: 'TV'
+        label: 'TV',
       },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Fan',
-        type: 'FAN',
-        label: 'GreenFan'
-      }
+      // {
+      //   exampleUniqueId: 'EFGH',
+      //   exampleDisplayName: 'Fan',
+      //   type: 'FAN',
+      //   label: 'GreenFan',
+      // },
     ];
 
     for (const device of exampleDevices) {
